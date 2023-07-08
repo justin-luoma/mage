@@ -13,6 +13,7 @@ Mage.Client/target
 
 # Mage.Common
 Mage.Common/target
+db/**/*.db
 
 # Mage.Plugins
 Mage.Plugins/target
@@ -94,8 +95,12 @@ Mage.Verify/*.zip
 Mage.Verify/*.json
 Mage.Verify/db
 
+# Mage.Simulation
+Mage.Simulation/**/*.db
+
 # Logs rotation
 *.log.*
+*.log
 
 # Utils
 releases

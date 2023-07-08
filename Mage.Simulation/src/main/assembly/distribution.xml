@@ -11,7 +11,6 @@
             <outputDirectory>lib/</outputDirectory>
             <useProjectArtifact>false</useProjectArtifact>
             <useProjectAttachments>false</useProjectAttachments>
-            <useTransitiveFiltering>true</useTransitiveFiltering>
             <excludes>
                 <exclude>*</exclude>
             </excludes>

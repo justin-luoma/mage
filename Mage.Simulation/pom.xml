@@ -47,6 +47,11 @@
             <version>${mage-version}</version>
         </dependency>
         <dependency>
+            <groupId>org.mage</groupId>
+            <artifactId>mage-game-commanderfreeforall</artifactId>
+            <version>${mage-version}</version>
+        </dependency>
+        <dependency>
             <groupId>${project.parent.groupId}</groupId>
             <artifactId>mage-game-twoplayerduel</artifactId>
             <version>${project.version}</version>

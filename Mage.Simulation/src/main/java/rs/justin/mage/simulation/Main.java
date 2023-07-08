@@ -11,10 +11,8 @@ import mage.cards.repository.CardScanner;
 import mage.cards.repository.RepositoryUtil;
 import mage.constants.MultiplayerAttackOption;
 import mage.constants.RangeOfInfluence;
-import mage.game.Game;
-import mage.game.GameOptions;
-import mage.game.TwoPlayerDuel;
-import mage.game.TwoPlayerMatch;
+import mage.game.*;
+import mage.game.match.Match;
 import mage.game.match.MatchOptions;
 import mage.game.match.MatchPlayer;
 import mage.game.match.MatchType;
@@ -30,10 +28,13 @@ import mage.server.util.config.GamePlugin;
 import mage.server.util.config.Plugin;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import rs.justin.mage.utils.Combinations;
 
 import java.io.File;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
 
 @Parameters(separators = "=, ")
 public class Main {
@@ -54,14 +55,31 @@ public class Main {
 
   @Parameter(
       names = {"--config", "-c"},
-      description = "Path to config.xml, default: config/config.xml (same as server config)"
+      description = "Path to config.xml, default: config/config.xml (same as server config)",
+      arity = 1
   )
   private String config;
+
+  @Parameter(
+      names = {"--bootstrap", "-b"},
+      description = "bootstrap the card repository (default = true)",
+      arity = 1
+  )
+  private boolean bootstrap = true;
+
+  @Parameter(
+      names = {"--matches", "-m"},
+      description = "Number of matches to simulate",
+      arity = 1
+  )
+  private int matches = 1;
 
   @Parameter(names = {"--help", "-h"}, help = true)
   private boolean help;
 
   private int exit = 0;
+
+  private Random random;
 
   public static void main(String[] args) {
     Main main = new Main();
@@ -77,14 +95,38 @@ public class Main {
       System.exit(0);
     }
 
+    main.random = new Random();
+
+    main.run();
+  }
+
+  private void run() {
+    switch (mode.toLowerCase()) {
+      case "duel":
+        init();
+        duel();
+        break;
+      case "commander":
+        init();
+        commander();
+        break;
+    }
+
+    cleanup();
+    System.exit(exit);
+  }
+
+  private void init() {
     String configPath = Paths.get("config", "config.xml").toString();
 
-    if (main.config != null) {
-      configPath = Paths.get(main.config).toString();
+    if (config != null) {
+      configPath = Paths.get(config).toString();
     }
 
     try {
-      RepositoryUtil.bootstrapLocalDb();
+      if (bootstrap) {
+        RepositoryUtil.bootstrapLocalDb();
+      }
       CardScanner.scan();
 
       logger.trace("Reading config file: {}", configPath);
@@ -106,21 +148,6 @@ public class Main {
       logger.fatal("Failed to load config file: {}", configPath);
       System.exit(-1);
     }
-
-    main.run();
-  }
-
-  private void run() {
-    System.out.printf("%s%n%s%n", mode, decks);
-
-    switch (mode.toLowerCase()) {
-      case "duel":
-        duel();
-        break;
-    }
-
-    cleanup();
-    System.exit(exit);
   }
 
   private void duel() {
@@ -132,7 +159,7 @@ public class Main {
 
     Game game = new TwoPlayerDuel(MultiplayerAttackOption.LEFT, RangeOfInfluence.ALL, MulliganType.GAME_DEFAULT.getMulligan(0), 20);
 
-    MatchOptions matchOptions = new MatchOptions("TwoPlayerDuelSimulation", "TwoPlayerDuel", true, 2);
+    MatchOptions matchOptions = new MatchOptions("TwoPlayerDuelSimulation", "TwoPlayerDuel", false, 2);
     matchOptions.setAttackOption(MultiplayerAttackOption.LEFT);
     matchOptions.setMullgianType(MulliganType.GAME_DEFAULT);
     matchOptions.setLimited(false);
@@ -159,48 +186,127 @@ public class Main {
 
       game.setGameOptions(options);
 
+      runGame(game, player1);
+    } catch (RuntimeException e) {
+      exit = -1;
+      // error already handled
+    }
+  }
+
+  private void commander() {
+    if (decks == null || decks.size() < 2) {
+      logger.fatal("Wrong number of decks, expected at least 2");
+      exit = -1;
+      return;
+    }
+    Game game = new CommanderFreeForAll(MultiplayerAttackOption.MULTIPLE, RangeOfInfluence.ALL, MulliganType.GAME_DEFAULT.getMulligan(0), 40);
+
+    MatchOptions matchOptions = new MatchOptions("CommanderSimulation", "Commander", true, decks.size());
+    matchOptions.setLimited(false);
+
+    Match match = new CommanderFreeForAllMatch(matchOptions);
+
+    try {
+      List<Deck> decklists = new ArrayList<>(decks.size());
+      List<Player> players = new ArrayList<>(decks.size());
+
+      List<Integer> playerIndexes = new ArrayList<>(decks.size());
+
+      for (int i = 0; i < decks.size(); i++) {
+        String deck = decks.get(i);
+        Deck d = loadDeck(deck);
+        decklists.add(d);
+        players.add(PlayerFactory.instance.createPlayer(PlayerType.COMPUTER_MAD, String.valueOf(i + 1), RangeOfInfluence.ALL, 10).get());
+      }
+
+      List<List<Integer>> matchPlayers = Combinations.combinations(playerIndexes, 2);
+
+      for (List<Integer> matches : matchPlayers) {
+        int player1Index = matches.get(0);
+        int player2Index = matches.get(1);
+        Player player1 = players.get(player1Index);
+        Player player2 = players.get(player2Index);
+        Deck deck1 = decklists.get(player1Index);
+        Deck deck2 = decklists.get(player2Index);
+
+        player1.setMatchPlayer(new MatchPlayer(player2, deck2, match));
+        player2.setMatchPlayer(new MatchPlayer(player1, deck1, match));
+      }
+
+      for (int i = 0; i < players.size(); i++) {
+        game.addPlayer(players.get(i), decklists.get(i));
+        game.loadCards(decklists.get(i).getCards(), players.get(i).getId());
+        match.addPlayer(players.get(i), decklists.get(i));
+      }
+
+      GameOptions options = new GameOptions();
+      options.testMode = false;
+
+      game.setGameOptions(options);
+
+      runGame(game, players.get(random.nextInt(decks.size())));
+    } catch (RuntimeException e) {
+      logger.fatal(e);
+      exit = -1;
+      // error already handled
+    }
+  }
+
+  private void runGame(Game game, Player startingPlayer) {
+    int wins = 0;
+    int loses = 0;
+    int draws = 0;
+
+    for (int i = 0; i < matches; i++) {
+      Game tmp = game.copy();
       long start = System.nanoTime();
-      game.start(player1.getId());
+      tmp.start(startingPlayer.getId());
       long stop = System.nanoTime();
 
       logger.info("Time: {} ms", (stop - start) / 1000000);
 
-      System.out.println(game.getWinner());
+      String winner = tmp.getWinner();
+      System.out.println(winner);
 
-      exit = game.getWinner().contains("1") ? 0 : 1;
-    } catch (RuntimeException e) {
-      logger.error(e);
-      // error already handled
+      switch (winner.contains("draw") ? 2 : winner.contains("1") ? 0 : 1) {
+        case 0:
+          wins += 1;
+          break;
+        case 1:
+          loses += 1;
+          break;
+        case 2:
+          draws += 1;
+          break;
+      }
+
+      if (wins > matches - i) {
+        System.out.println("Player 1 wins");
+        exit = 0;
+        return;
+      }
     }
 
-//    List<Tuple<Player, Deck>> players = new ArrayList<>(2);
-//
-//    for (String file : decks) {
-//      Deck deck;
-//      try {
-//        DeckCardLists list = importer.importDeck(file, false);
-//        deck = Deck.load(list, true, false);
-//      } catch (Exception e) {
-//        logger.fatal("Failed to load deck: {} error: {}", file, e.getMessage(), e);
-//        return;
-//      }
-//      try {
-//        Player player = PlayerFactory.instance.createPlayer(PlayerType.COMPUTER_MAD, "1", RangeOfInfluence.ALL, 10)
-//            .orElseThrow(() -> new RuntimeException("failed to create player"));
-//        players.add(new Tuple<>(player, deck));
-//      } catch (RuntimeException e) {
-//        logger.fatal("Failed to create player");
-//        return;
-//      }
-//    }
-
-
-
+    if (loses > wins && loses > draws) {
+      System.out.println("Player 1 loses");
+      exit = 1;
+    } else if (wins > loses && wins > draws) {
+      System.out.println("Player 1 wins");
+      exit = 0;
+    } else if (draws > wins && draws > loses) {
+      System.out.println("Draw");
+      exit = 2;
+    }
   }
 
   private Deck loadDeck(String file) {
+    File f = new File(file);
+    if (!f.exists()) {
+      logger.fatal("Deck file {} doesn't exist", file);
+      throw new RuntimeException("failed to load deck");
+    }
     try {
-      TxtDeckImporter importer = new TxtDeckImporter(false);
+      TxtDeckImporter importer = new TxtDeckImporter(true);
       DeckCardLists list = importer.importDeck(file, false);
       return Deck.load(list, false, false);
     } catch (Exception e) {
@@ -219,15 +325,5 @@ public class Main {
 
   private void cleanup() {
     CardRepository.instance.closeDB();
-  }
-
-  static class Tuple<A, B> {
-    public final A a;
-    public final B b;
-
-    public Tuple(A a, B b) {
-      this.a = a;
-      this.b = b;
-    }
   }
 }
